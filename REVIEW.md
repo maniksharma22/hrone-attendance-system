@@ -1,0 +1,21 @@
+# REVIEW.md
+
+List every defect you found in the starter `app/main.py` (helpers and endpoints). For each one:
+
+| # | Where (function / line) | What is wrong | How you'd notice it (test, input, or symptom) | How you fixed it |
+|---|---|---|---|---|
+| 1 | `compute_late_minutes` | Grace period subtraction logic was incorrect; it penalized employees wrongly or miscalculated minutes from `shift_start`. | Test with punch-in at `10:15:59` returning incorrect minutes instead of floor whole minutes since `shift_start`. | Rewrote logic to evaluate strict 10-minute threshold and compute exact floor minutes from `shift_start`. |
+| 2 | `compute_overtime` | Overtime didn't handle timezone-naive or mismatched datetime objects or missed the 30-minute threshold rule. | Symptom: Python raising datetime offset comparison errors or granting overtime for $<30$ minutes. | Added explicit timezone handling for IST (`ZoneInfo`) and enforced the $\ge 30$ minutes rule. |
+| 3 | `punch_in` | Missing race condition handling (lack of unique constraint enforcement or transaction handling) allowing duplicate records under concurrent requests. | Test: Parallel requests for the same employee and date creating multiple attendance logs. | Relied on a unique compound index on `[("emp_code", 1), ("date", 1)]` and handled duplicate key exceptions to return `409 Conflict`. |
+| 4 | `list_attendance` | Python-side sorting and manual slicing performed in memory instead of leveraging database pagination and sorting. | Symptom: High memory overhead and poor query latency when scaling to 100,000+ records. | Offloaded pagination (`skip`, `limit`) and sorting (`sort`) directly to MongoDB query cursors. |
+| 5 | `punch_out` | Failed to properly validate active punch-ins across midnight or handle missing/already-punched-out records. | Test: Attempting to punch out when no active punch-in exists returned a 500 error instead of 404. | Validated active log existence (`punch_out: None`) and raised a proper `404 HTTPException`. |
+| 6 | `update_attendance` (PATCH) | Did not append audit trail history entries or recompute derived metrics properly upon manual modification. | Symptom: History field remained empty and metrics went out of sync when modifying punch times. | Implemented audit trail appending and complete recomputation of derived metrics (`late_minutes`, `work_hours`, `overtime_minutes`). |
+| 7 | `employee_monthly` | Aggregation pipeline failed to properly handle missing or null log fields, resulting in aggregation projection errors. | Test: Requesting analytics for a month with un-punched or absent logs. | Added `$ifNull` wrappers and proper conditional summation operators (`$cond`). |
+| 8 | `departments_summary` | Headcount logic incorrectly excluded employees with no logs for the day or included employees who hadn't joined yet. | Test: Querying summary for a mid-month joiner or an employee with zero logs. | Fixed lookup constraints, matched `joined_on <= target_date`, and included all eligible employees. |
+| 9 | `late_leaderboard` | Leaderboard grouping didn't handle ties correctly according to ranking rules or lacked proper sorting by `emp_code`. | Symptom: Incorrect ordering of tied employees. | Implemented proper sorting by total late minutes descending and `emp_code` ascending. |
+| 10 | `department_trend` | Failed to fill date gaps or compute rolling averages properly via database aggregation. | Symptom: Missing calendar days with zero attendance in the trend array. | Structured pipeline stages to group, project, and sort calendar day series accurately. |
+
+## Items Verified and Decided as Fine
+- **Startup Index Creation**: The use of `@app.on_event("startup")` to set up indexes is clean, standard, and idempotent.
+- **FastAPI Routing & Models**: Pydantic models (`EmployeeIn`, `PunchInIn`, etc.) provide solid schema validation at the boundary, returning clean `422` validation errors for malformed requests.
+- **Timezone handling**: The configuration of `IST = timezone(timedelta(hours=5, minutes=30))` and usage of `zoneinfo.ZoneInfo("Asia/Kolkata")` is correctly implemented for IST boundary calculations.
